@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <title>Redirecting...</title>
+  <script>
+    const basename = '/drawMandelbrotSet';
+    let path =
+      window.location.pathname +
+      window.location.search +
+      window.location.hash;
+    if (path.startsWith(basename)) {
+      path = path.slice(basename.length) || '/';
+    }
+    sessionStorage.setItem('redirect', path);
+    window.location.replace(basename + '/');
+  </script>
+</head>
+<body></body>
+</html>
