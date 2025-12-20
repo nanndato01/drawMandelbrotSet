@@ -5,8 +5,6 @@ import type Complex from "../types/Complex";
 import { PosToComplex } from "../lib/PosToComplex";
 import { ComplexToPos } from "../lib/ComplexToPos";
 import { Recurrence } from "../lib/Recurrence";
-import { RecAllPixels } from "../lib/RecAllPixels";
-
 
 interface Props{
     canvasW: number;

@@ -1,4 +1,4 @@
-import { Recurrence } from "./recurrence";
+import { Recurrence } from "./Recurrence";
 import { PosToComplex } from "./PosToComplex";
 
 interface Item{

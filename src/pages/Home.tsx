@@ -51,7 +51,7 @@ const colorFuncs: ColorFunc[] = [
         const light = 50 + t * 50;
         return `hsl(0, 0%, ${light}%)`;
     },
-    (iter, escaped, maxIter) => {
+    (_iter, escaped, _maxIter) => {
         return escaped ? "white" : "black";
     }
 ];
