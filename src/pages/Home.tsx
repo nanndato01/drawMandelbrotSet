@@ -1,24 +1,48 @@
 import { useState } from "react";
+
+import type Complex from "../types/Complex";
 import SelectBox from "../components/SelectBox";
 import Canvas from "../components/Canvas";
 
-type ColorFunc = (iter: number, escaped: boolean, maxIter: number) => string;
+type ColorFunc = (iter: number, escaped: boolean, maxIter: number, lastZ: Complex) => string;
 
 const canavsSize = [
-    {name: "400*300", val: "400 300"},
-    {name: "800*600", val: "800 600"},
-    {name: "1200*900", val: "1200 900"}
+    { name: "400*300", val: "400 300" },
+    { name: "800*600", val: "800 600" },
+    { name: "1200*900", val: "1200 900" }
 ];
 
 const colorItem = [
-    {name: "カラー1", val: "0"},
-    {name: "カラー2", val: "1"},
-    {name: "モノクロ", val: "2"},
-    {name: "なし", val: "3"}
+    { name: "周期", val: "0" },
+    { name: "カラー1", val: "1" },
+    { name: "カラー2", val: "2" },
+    { name: "モノクロ", val: "3" },
+    { name: "なし", val: "4" }
 ]
 
 const colorFuncs: ColorFunc[] = [
-    (iter, escaped, maxIter) => {
+    (iter, escaped, _maxIter, lastZ) => {
+        if (!escaped) return "black";
+
+        const abs2 = lastZ.re * lastZ.re + lastZ.im * lastZ.im;
+
+        const log_zn = 0.5 * Math.log(Math.max(abs2, Number.EPSILON));
+
+        const nu = iter + 1 - Math.log(log_zn / Math.log(2)) / Math.log(2);
+
+        const freq = 0.15;
+
+        const r = Math.sin(2 * Math.PI * (freq * nu + 0.0)) * 0.5 + 0.5;
+        const g = Math.sin(2 * Math.PI * (freq * nu + 0.33)) * 0.5 + 0.5;
+        const b = Math.sin(2 * Math.PI * (freq * nu + 0.66)) * 0.5 + 0.5;
+
+        return `rgb(
+            ${Math.floor(r * 255)},
+            ${Math.floor(g * 255)},
+            ${Math.floor(b * 255)}
+        )`;
+    },
+    (iter, escaped, maxIter, _lastZ) => {
         if (!escaped) return "black";
 
         const base = Math.log(iter + 1) / Math.log(maxIter + 1);
@@ -30,7 +54,7 @@ const colorFuncs: ColorFunc[] = [
 
         return `hsl(${hue}, ${sat}%, ${light}%)`;
     },
-    (iter, escaped, maxIter) => {
+    (iter, escaped, maxIter, _lastZ) => {
         if (!escaped) return "black";
 
         const base = Math.log(iter + 1) / Math.log(maxIter + 1);
@@ -42,7 +66,7 @@ const colorFuncs: ColorFunc[] = [
 
         return `hsl(${hue}, ${sat}%, ${light}%)`;
     },
-    (iter, escaped, maxIter) => {
+    (iter, escaped, maxIter, _lastZ) => {
         if (!escaped) return "black";
 
         const base = Math.log(iter + 1) / Math.log(maxIter + 1);
@@ -51,7 +75,7 @@ const colorFuncs: ColorFunc[] = [
         const light = 50 + t * 50;
         return `hsl(0, 0%, ${light}%)`;
     },
-    (_iter, escaped, _maxIter) => {
+    (_iter, escaped, _maxIter, _lastZ) => {
         return escaped ? "white" : "black";
     }
 ];
@@ -74,16 +98,16 @@ export default function Home() {
         setScale(e.target.value);
     }
 
-    return(
+    return (
         <>
             <div className="flex justify-center">
                 <label>
                     Canvas Size:
-                    <SelectBox selects={canavsSize} value={canvasSizeSelected} onChange={setcanvasSizeSelected}/>
+                    <SelectBox selects={canavsSize} value={canvasSizeSelected} onChange={setcanvasSizeSelected} />
                 </label>
                 <label>
                     Color:
-                    <SelectBox selects={colorItem} value={colorSelected} onChange={setColorSelected}/>
+                    <SelectBox selects={colorItem} value={colorSelected} onChange={setColorSelected} />
                 </label>
 
                 <label>
@@ -108,7 +132,7 @@ export default function Home() {
             }
 
             <div>
-                <Canvas canvasW={canvasW} canvasH={canvasH} scale={scale} maxIter={maxIter} colorFunc={colorFunc}/>
+                <Canvas canvasW={canvasW} canvasH={canvasH} scale={scale} maxIter={maxIter} colorFunc={colorFunc} />
             </div>
         </>
     );

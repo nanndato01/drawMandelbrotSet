@@ -1,12 +1,15 @@
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 
-import type PointerPos from "../types/PointerPos";
+import type PixelPos from "../types/PixelPos";
 import type Complex from "../types/Complex";
+
 import { PosToComplex } from "../lib/PosToComplex";
 import { ComplexToPos } from "../lib/ComplexToPos";
+import { NormalToZoom } from "../lib/NormalToZoom";
+import { ZoomToNormal } from "../lib/ZoomToNormal";
 import { Recurrence } from "../lib/Recurrence";
 
-interface Props{
+interface Props {
     canvasW: number;
     canvasH: number;
     scale: number;
@@ -14,92 +17,110 @@ interface Props{
     colorFunc: (
         iter: number,
         escaped: boolean,
-        maxIter: number
+        maxiter: number,
+        lastZ: Complex
     ) => string;
 }
 
+type ZoomPhase = "idle" | "selecting";
+
 export default function Canvas({ canvasW, canvasH, scale, maxIter, colorFunc }: Props) {
-    const BaseCanvasRef = useRef<HTMLCanvasElement>(null);
-    const AxisCanvasRef = useRef<HTMLCanvasElement>(null);
-    const OrbitCanvasRef = useRef<HTMLCanvasElement>(null);
-    const [mousePos, setMousePos] = useState<PointerPos>({ x: 0, y: 0 });
-    const [centerMousePos, setCenterMousePos] = useState<PointerPos>({x: canvasW / 2, y: canvasH / 2});
-    const [isCanvsClick, setIsCanvasClick] = useState<boolean>(false);
-    const [isAdjustingOrigin, setIsAdjustingOrigin] = useState<boolean>(false);
-    const [isAxisVisible, setIsAxisVisible] = useState<boolean>(false);
-    const [isBaseDrawn, setIsBaseDrawn] = useState<boolean>(false);
-    const [isDrawing, setIsDrawing] = useState<boolean>(false);
+    const mousePosRef = useRef<PixelPos>({ x: 0, y: 0 });
+    const startZoomMousePosRef = useRef<PixelPos>({ x: 0, y: 0 });
+    const endZoomMousePosRef = useRef<PixelPos>({ x: canvasW, y: canvasH });
+    const startZoomClickMousePosRef = useRef<PixelPos>({ x: 0, y: 0 });
+
+    const baseCanvasRef = useRef<HTMLCanvasElement>(null);
+    const orbitCanvasRef = useRef<HTMLCanvasElement>(null);
+    const zoomCanvasRef = useRef<HTMLCanvasElement>(null);
+
+    const [isZooming, setIsZooming] = useState(false);
+    const [isDrawing, setIsDrawing] = useState(false);
+    const [isBaseDrawn, setIsBaseDrawn] = useState(false);
+    const [isCanvasClick, setIsCanvasClick] = useState(false);
+
+    const [zoomPhase, setZoomPhase] = useState<ZoomPhase>("idle");
     const [progress, setProgress] = useState(0);
     const abortRef = useRef<AbortController | null>(null);
 
+    const centerX = canvasW * (3 / 4);
+    const centerY = canvasH / 2;
 
-    const centerX = centerMousePos.x;
-    const centerY = centerMousePos.y;
-
-    const c: Complex = PosToComplex(mousePos, scale, centerX, centerY);
-    const res = Recurrence(c, maxIter);
-
-    const handleClick = () => {
-        if(isAdjustingOrigin){
-            setCenterMousePos(mousePos);
-            handleCenter();
-            return;
-        }
-        setIsCanvasClick((clicked) => !clicked);
-        if(!OrbitCanvasRef.current)return;
-        const ctx = OrbitCanvasRef.current.getContext("2d");
-        if(!ctx)return;
-        ctx.clearRect(0, 0, canvasW, canvasH);
+    const getCtx = (canvasRef: React.RefObject<HTMLCanvasElement | null>): CanvasRenderingContext2D | null => {
+        return canvasRef.current?.getContext("2d") ?? null;
     };
 
-    const handleCenter = () => {
-        setIsAdjustingOrigin((centerd) => !centerd);
-        setIsAxisVisible(true);
-    }
+    const posToEndPos = (s: PixelPos, p: PixelPos): PixelPos => {
+        const dx = p.x - s.x;
+        const dy = dx * canvasH / canvasW;
+        return { x: p.x, y: s.y + dy };
+    };
 
-    const handleAxisVisible = () => {
+    const handleClickCanvas = () => {
+        if (isDrawing) return;
 
-        if(!AxisCanvasRef.current)return;
-        const ctx = AxisCanvasRef.current.getContext("2d");
-        if(!ctx)return;
+        const orbitCtx = getCtx(orbitCanvasRef);
+        if (!orbitCtx) return;
+        orbitCtx.clearRect(0, 0, canvasW, canvasH);
+        setIsCanvasClick(prev => !prev);
 
-        if(!isAxisVisible)drawAxis(centerMousePos);
-        else ctx.clearRect(0, 0, canvasW, canvasH);
-        setIsAxisVisible(prev => !prev);
-    }
+        if (isZooming) {
+            if (zoomPhase === "idle") {
+                startZoomMousePosRef.current = ZoomToNormal(mousePosRef.current, canvasW, canvasH, startZoomMousePosRef.current, endZoomMousePosRef.current);
+                startZoomClickMousePosRef.current = mousePosRef.current;
+                setZoomPhase("selecting");
+            } else if (zoomPhase === "selecting") {
+                endZoomMousePosRef.current = ZoomToNormal(posToEndPos(startZoomClickMousePosRef.current, mousePosRef.current), canvasW, canvasH, startZoomMousePosRef.current, endZoomMousePosRef.current);
+                setIsZooming(false);
+                setZoomPhase("idle");
+                drawBase();
+            }
+        }
+    };
+
+    const handleClickZoom = () => {
+        setIsZooming(prev => !prev);
+        setZoomPhase("idle");
+        setIsCanvasClick(false);
+    };
 
     const onMouseMove = (e: React.MouseEvent) => {
-        if(!OrbitCanvasRef.current)return;
-        const rect = OrbitCanvasRef.current.getBoundingClientRect();
-        const pos = {x: e.clientX - rect.left, y: e.clientY - rect.top};
-        setMousePos(pos);
-        if(isAdjustingOrigin && isAxisVisible)drawAxis(pos);
-        if(isCanvsClick)drawOrbit();
+        if (!zoomCanvasRef.current) return;
+        const rect = zoomCanvasRef.current.getBoundingClientRect();
+        const pos = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+        mousePosRef.current = pos;
+
+        const zoomCtx = getCtx(zoomCanvasRef);
+        if (!zoomCtx) return;
+        zoomCtx.clearRect(0, 0, canvasW, canvasH);
+
+        if (isCanvasClick && !isZooming && !isDrawing) drawOrbit(pos);
+        if (isZooming && zoomPhase === "selecting") drawZoom(pos, startZoomClickMousePosRef.current);
     };
 
     const drawBase = async () => {
-        if(!BaseCanvasRef.current)return;
-
-        const ctx = BaseCanvasRef.current.getContext("2d");
+        const ctx = getCtx(baseCanvasRef);
         if (!ctx) return;
 
         setIsDrawing(true);
         setIsBaseDrawn(false);
+        setIsCanvasClick(false);
         setProgress(0);
         const abortController = new AbortController();
         abortRef.current = abortController;
 
         await new Promise(requestAnimationFrame);
 
-        for(let y = 0; y < canvasH; y++){
-            if(abortController.signal.aborted){
+        for (let y = 0; y < canvasH; y++) {
+            if (abortController.signal.aborted) {
                 setIsDrawing(false);
                 return;
             }
-            for(let x = 0; x < canvasW; x++){
-                const c = PosToComplex({ x, y }, scale, centerX, centerY);
-                const { iter, escaped } = Recurrence(c, maxIter);
-                ctx.fillStyle = colorFunc(iter, escaped, maxIter);
+            for (let x = 0; x < canvasW; x++) {
+                const p = ZoomToNormal({ x, y }, canvasW, canvasH, startZoomMousePosRef.current, endZoomMousePosRef.current);
+                const c = PosToComplex(p, scale, centerX, centerY);
+                const { iter, escaped, results } = Recurrence(c, maxIter);
+                ctx.fillStyle = colorFunc(iter, escaped, maxIter, results.slice(-1)[0]);
                 ctx.fillRect(x, y, 1, 1);
             }
             setProgress(Math.floor((y / canvasH) * 100));
@@ -113,40 +134,24 @@ export default function Canvas({ canvasW, canvasH, scale, maxIter, colorFunc }: 
     const cancelDraw = () => {
         abortRef.current?.abort();
         abortRef.current = null;
-        if(!BaseCanvasRef.current)return;
-        const ctx = BaseCanvasRef.current.getContext("2d");
+        const ctx = getCtx(baseCanvasRef);
         if (!ctx) return;
         ctx.clearRect(0, 0, canvasW, canvasH);
         setIsBaseDrawn(false);
+        startZoomMousePosRef.current = { x: 0, y: 0 };
+        endZoomMousePosRef.current = { x: canvasW, y: canvasH };
     };
 
-
-    const drawAxis = (pos: PointerPos) => {
-        if(!AxisCanvasRef.current)return;
-
-        const ctx = AxisCanvasRef.current.getContext("2d");
-        if(!ctx)return;
+    const drawOrbit = (pos: PixelPos) => {
+        const ctx = getCtx(orbitCanvasRef);
+        if (!ctx) return;
         ctx.clearRect(0, 0, canvasW, canvasH);
 
-        ctx.strokeStyle = "black";
-        ctx.lineWidth = 3;
-        ctx.beginPath();
-        ctx.moveTo(pos.x + 2, 0);
-        ctx.lineTo(pos.x + 2, canvasH);
-        ctx.moveTo(0, pos.y + 2);
-        ctx.lineTo(canvasW, pos.y + 2);
-        ctx.stroke();
-    }
-
-    const drawOrbit = () => {
-        if(!OrbitCanvasRef.current)return;
-
-        const ctx = OrbitCanvasRef.current.getContext("2d");
-        if(!ctx)return;
-        ctx.clearRect(0, 0, canvasW, canvasH);
+        const c = PosToComplex(ZoomToNormal(pos, canvasW, canvasH, startZoomMousePosRef.current, endZoomMousePosRef.current), scale, centerX, centerY);
+        const res = Recurrence(c, maxIter);
 
         for (const z of res.results) {
-            const p = ComplexToPos(z, scale, centerX, centerY);
+            const p = NormalToZoom(ComplexToPos(z, scale, centerX, centerY), canvasW, canvasH, startZoomMousePosRef.current, endZoomMousePosRef.current);
 
             ctx.fillStyle = "black";
             ctx.beginPath();
@@ -159,32 +164,49 @@ export default function Canvas({ canvasW, canvasH, scale, maxIter, colorFunc }: 
         }
     };
 
+    const drawZoom = (mousePos: PixelPos, sPos: PixelPos) => {
+        const ctx = getCtx(zoomCanvasRef);
+        if (!ctx) return;
+        ctx.clearRect(0, 0, canvasW, canvasH);
+
+        const sx = sPos.x;
+        const sy = sPos.y;
+        const p = posToEndPos(sPos, mousePos);
+        const ex = p.x;
+        const ey = p.y;
+
+        ctx.strokeStyle = "black";
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.moveTo(sx, sy);
+        ctx.lineTo(ex, sy);
+        ctx.moveTo(sx, sy);
+        ctx.lineTo(sx, ey);
+        ctx.moveTo(ex, sy);
+        ctx.lineTo(ex, ey);
+        ctx.moveTo(sx, ey);
+        ctx.lineTo(ex, ey);
+        ctx.stroke();
+    };
+
     const reset = () => {
-        if (!BaseCanvasRef.current || !OrbitCanvasRef.current) return;
-        const baseCtx = BaseCanvasRef.current.getContext("2d");
-        const orbitCtx = OrbitCanvasRef.current.getContext("2d");
+        const baseCtx = getCtx(baseCanvasRef);
+        const orbitCtx = getCtx(orbitCanvasRef);
         if (!baseCtx || !orbitCtx) return;
         baseCtx.clearRect(0, 0, canvasW, canvasH);
         orbitCtx.clearRect(0, 0, canvasW, canvasH);
         setIsBaseDrawn(false);
         setIsCanvasClick(false);
+        setIsZooming(false);
+        startZoomMousePosRef.current = { x: 0, y: 0 };
+        endZoomMousePosRef.current = { x: canvasW, y: canvasH };
     };
-
-    const resetAxis = () => {
-        const p: PointerPos = {x: canvasW / 2, y: canvasH / 2};
-        setCenterMousePos(p);
-        if(isAxisVisible)drawAxis(p);
-    }
-
-    useEffect(() => {
-        resetAxis();
-    }, [canvasW, canvasH]);
 
     return (
         <>
             <div className="flex justify-center">
                 {!isBaseDrawn && !isDrawing &&
-                    <button onClick={drawBase} disabled={isAdjustingOrigin}
+                    <button onClick={drawBase} disabled={isZooming}
                         className="border-2 rounded-xl p-1 m-1 disabled:bg-gray-300"
                     >描画開始</button>
                 }
@@ -203,26 +225,21 @@ export default function Canvas({ canvasW, canvasH, scale, maxIter, colorFunc }: 
                         className="border-2 rounded-xl p-1 m-1"
                     >リセット</button>
                 )}
-                <button onClick={handleCenter} disabled={isBaseDrawn || isDrawing}
-                    className="border-2 rounded-xl p-1 m-1 disabled:bg-gray-300"
-                >{isAdjustingOrigin ? "原点調整中" : "原点調整"}</button>
-                <button onClick={handleAxisVisible}
-                    className="border-2 rounded-xl p-1 m-1"
-                >{isAxisVisible ? "原点非表示" : "原点表示"}</button>
-                <button onClick={resetAxis} disabled={isBaseDrawn || isDrawing}
-                    className="border-2 rounded-xl p-1 m-1 disabled:bg-gray-300"
-                >原点リセット</button>
+                {isBaseDrawn && !isDrawing && (
+                    <button onClick={handleClickZoom}
+                        className="border-2 rounded-xl p-1 m-1 disabled:bg-gray-300"
+                    >{isZooming ? "部分拡大中" : "部分拡大"}</button>
+                )}
             </div>
-
             <div>
-                <div className="relative p-3" onClick={handleClick}>
-                    <canvas ref={BaseCanvasRef} width={canvasW} height={canvasH}
+                <div className="relative p-3" onClick={handleClickCanvas}>
+                    <canvas ref={baseCanvasRef} width={canvasW} height={canvasH}
                         className="absolute left-1/2 -translate-x-1/2 border-2"
                     />
-                    <canvas ref={AxisCanvasRef} width={canvasW} height={canvasH}
+                    <canvas ref={orbitCanvasRef} width={canvasW} height={canvasH}
                         className="absolute left-1/2 -translate-x-1/2"
                     />
-                    <canvas ref={OrbitCanvasRef} width={canvasW} height={canvasH} onMouseMove={onMouseMove}
+                    <canvas ref={zoomCanvasRef} width={canvasW} height={canvasH} onMouseMove={onMouseMove}
                         className="absolute left-1/2 -translate-x-1/2"
                     />
                 </div>
